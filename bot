@@ -1,0 +1,49 @@
+import time
+import requests
+import pandas as pd
+from discord_webhook import DiscordWebhook
+
+# ------------------ DISCORD ------------------
+DISCORD_WEBHOOK = "YOUR_DISCORD_WEBHOOK_URL"
+
+# ------------------ ALERT SETTINGS ------------------
+SCORE_THRESHOLD = 6
+CHECK_INTERVAL_SECONDS = 300  # 5 minutes
+
+def send_discord(message: str) -> None:
+    webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=message)
+    webhook.execute()
+
+# ------------------ SIGNALS ------------------
+def get_top_50() -> list:
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": 50, "page": 1}
+    return requests.get(url, params=params).json()
+
+def get_prices(coin_id: str, days: int = 10) -> list:
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": days}
+
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        return []
+
+    data = response.json()
+    if "prices" not in data:
+        return []
+
+    return [p[1] for p in data["prices"]]
+
+def volume_spike(coin_id: str) -> bool:
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": 1}
+    data = requests.get(url, params=params).json()
+    volumes = [v[1] for v in data["total_volumes"]]
+    return volumes[-1] > volumes[-2] * 2
+
+def rsi_signal(prices: list) -> bool:
+    s = pd.Series(prices)
+    delta = s.diff().dropna()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0
+
