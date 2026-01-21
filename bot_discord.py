@@ -1,81 +1,87 @@
+import os
 import time
 import requests
-import pandas as pd
-from discord_webhook import DiscordWebhook
+from discord_webhook import DiscordWebhook, DiscordEmbed
 
-DISCORD_WEBHOOK = "YOUR_DISCORD_WEBHOOK_URL"
-SCORE_THRESHOLD = 6
-CHECK_INTERVAL_SECONDS = 600  # 10 minutes (slower)
+# -------------------------
+# Environment variables
+# -------------------------
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+if not WEBHOOK_URL:
+    raise Exception("Please set DISCORD_WEBHOOK_URL in Replit Secrets")
 
-def send_discord(message: str) -> None:
-    webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=message)
-    webhook.execute()
+# -------------------------
+# CoinGecko API
+# -------------------------
+COINGECKO_TOP_URL = "https://api.coingecko.com/api/v3/coins/markets"
+COINGECKO_PARAMS = {
+    "vs_currency": "usd",
+    "order": "market_cap_desc",
+    "per_page": 50,
+    "page": 1,
+    "sparkline": "false"
+}
 
-def get_top_50() -> list:
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": 50, "page": 1}
+# -------------------------
+# Settings
+# -------------------------
+CHECK_INTERVAL = 60 * 5  # 5 minutes
 
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        print("Error fetching top 50:", response.status_code, response.text[:100])
-        return []
-
+# -------------------------
+# Helper Functions
+# -------------------------
+def fetch_top_50():
+    response = requests.get(COINGECKO_TOP_URL, params=COINGECKO_PARAMS)
     data = response.json()
-    if not isinstance(data, list):
-        print("Top 50 response not list:", data)
-        return []
-
     return data
 
-def calculate_rsi(prices: list) -> float:
-    s = pd.Series(prices)
-    delta = s.diff().dropna()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
+def check_signals(coin):
+    # Signals
+    signals = []
 
-def run() -> None:
+    if coin["price_change_percentage_1h_in_currency"] and coin["price_change_percentage_1h_in_currency"] > 2:
+        signals.append("1H +2%")
+
+    if coin["price_change_percentage_24h_in_currency"] and coin["price_change_percentage_24h_in_currency"] > 10:
+        signals.append("24H +10%")
+
+    if coin["total_volume"] and coin["total_volume"] > 50000000:
+        signals.append("High Volume")
+
+    return signals
+
+def send_discord_alert(coin, signals):
+    webhook = DiscordWebhook(url=WEBHOOK_URL)
+    embed = DiscordEmbed(
+        title=f"🚀 Coin Alert: {coin['name']} ({coin['symbol'].upper()})",
+        description="Multiple signals aligned!",
+        color=0x00ff00
+    )
+
+    embed.add_embed_field(name="Price", value=f"${coin['current_price']:,}", inline=True)
+    embed.add_embed_field(name="Market Cap", value=f"${coin['market_cap']:,}", inline=True)
+    embed.add_embed_field(name="Signals", value=", ".join(signals), inline=False)
+
+    webhook.add_embed(embed)
+    webhook.execute()
+
+# -------------------------
+# Main Loop
+# -------------------------
+def main():
     while True:
-        coins = get_top_50()
-        if not coins:
-            time.sleep(CHECK_INTERVAL_SECONDS)
-            continue
+        try:
+            coins = fetch_top_50()
 
-        for coin in coins:
-            symbol = coin["symbol"].upper()
-            price = coin["current_price"]
-            market_cap = coin["market_cap"]
-            volume = coin["total_volume"]
+            for coin in coins:
+                signals = check_signals(coin)
+                if len(signals) >= 2:  # only alert if 2+ signals
+                    send_discord_alert(coin, signals)
 
-            # Use CoinGecko data already returned (no extra API calls)
-            score = 0
-            reasons = []
+        except Exception as e:
+            print("Error:", e)
 
-            if volume > market_cap * 0.05:
-                score += 2
-                reasons.append("Volume Spike")
-
-            rsi = calculate_rsi([p["current_price"] for p in coins])
-            if rsi < 30 or rsi > 70:
-                score += 1
-                reasons.append("RSI Extreme")
-
-            if market_cap > 10_000_000_000:
-                score += 1
-                reasons.append("Big Market Cap")
-
-            if score >= SCORE_THRESHOLD:
-                msg = (
-                    f"🚨 ALERT: {symbol}\n"
-                    f"Price: ${price}\n"
-                    f"Score: {score}\n"
-                    f"Reasons: {', '.join(reasons)}"
-                )
-                send_discord(msg)
-
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    run()
+    main()
