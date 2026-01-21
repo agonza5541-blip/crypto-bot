@@ -75,7 +75,19 @@ def send_discord_alert(coin, signals):
     webhook.add_embed(embed)
     webhook.execute()
 
+def send_test_alert():
+    webhook = DiscordWebhook(url=WEBHOOK_URL)
+    embed = DiscordEmbed(
+        title="✅ Bot Test Alert",
+        description="The bot is running and connected to Discord!",
+        color=0x00ff00
+    )
+    webhook.add_embed(embed)
+    webhook.execute()
+
 def main():
+    send_test_alert()  # <-- TEST ALERT ON START
+
     while True:
         try:
             coins = fetch_top_50()
